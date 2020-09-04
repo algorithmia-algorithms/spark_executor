@@ -1,14 +1,12 @@
 package spark_executor.main
 
-import org.apache.spark.streaming.{Seconds, StreamingContext}
+import org.apache.spark.streaming.{Milliseconds, Seconds, StreamingContext}
 import org.apache.spark.{SparkConf, SparkContext}
 import org.apache.spark.streaming.dstream.DStream
 import play.api.libs.json._
 import spark_executor.main.models.algorithmia.{AlgoInput, AlgoOutput}
 import com.algorithmia._
 import com.algorithmia.algo.{AlgoFailure, AlgoSuccess}
-
-import scala.collection.mutable.Queue
 import org.apache.spark.rdd.RDD
 
 import scala.collection.mutable
@@ -16,10 +14,10 @@ import scala.collection.mutable
 object algorithm_processing {
 
   val ALGO_NAME = "network_anomaly_detection/orchestrator/0.1.0"
-  val CLIENT: AlgorithmiaClient = Algorithmia.client()
+  val CLIENT: AlgorithmiaClient = Algorithmia.client("sim7mdIMHwtntEOpTSWumWVZ5wt1")
   val CONF: SparkConf = new SparkConf().setMaster("local[1]").setAppName("NetworkAnomalyDetector")
   val SC = new SparkContext(CONF)
-  val SSC = new StreamingContext(SC, Seconds(10))
+  val SSC = new StreamingContext(SC, Milliseconds(100))
 
   def algorithm_request(input: AlgoInput, client: AlgorithmiaClient): AlgoOutput = {
     val result = client.algo(ALGO_NAME).pipe(input)
@@ -30,20 +28,28 @@ object algorithm_processing {
   }
 
   def main(args: Array[String]): Unit = {
-    val inputData: RDD[String] = SC.textFile("src/main/resources/example_input.txt")
+    // lets get our input file loaded, this "Input" will be replaced with either an HDFS, Kafka, or Kinesis connection in a production environment
+    val inputData: RDD[String] = SC.textFile("src/main/resources/example_input.txt").flatMap(s => s.split('\n'))
+
+    // lets convert this RDD into a Stream that wrpe can use for processing
     val inputQueue: mutable.Queue[RDD[String]] = mutable.Queue()
     inputQueue += inputData
-    val inputStream = SSC.queueStream(inputQueue, oneAtATime = true, defaultRDD = inputData)
+    val inputStream = SSC.queueStream(inputQueue, oneAtATime = true)
+
+    // Now that we have the stream loaded, lets convert it from a list of strings into our actual algorithm input format
     val algorithmInputs: DStream[AlgoInput] = inputStream
       .map(j => Json.parse(j).as[AlgoInput])
+    // And lets call our orchestrator algorithm on each input in our DStream
     val algorithmOutputs: DStream[AlgoOutput] = algorithmInputs
       .map(req => algorithm_request(req, CLIENT))
     var i = 0
-    algorithmOutputs.map(l => {println(l); l})
-        .foreachRDD(rdd => {
-          rdd.saveAsTextFile(s"src/main/resources/output/output_file_$i.txt")
-          i += 1
-        })
+    algorithmOutputs.foreachRDD(rdd => {
+          if (rdd.isEmpty()) {
+            Console.println("terminated job")
+            SSC.stop(stopSparkContext = true, stopGracefully = false)
+          } else {
+            rdd.foreach(Console.println)
+          }})
     SSC.start()
     SSC.awaitTermination()
     Console.println("finished")
