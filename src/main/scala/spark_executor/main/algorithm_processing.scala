@@ -14,7 +14,7 @@ import scala.collection.mutable
 object algorithm_processing {
 
   val ALGO_NAME = "network_anomaly_detection/orchestrator/0.1.0"
-  val CLIENT: AlgorithmiaClient = Algorithmia.client("sim7mdIMHwtntEOpTSWumWVZ5wt1")
+  val CLIENT: AlgorithmiaClient = Algorithmia.client()
   val CONF: SparkConf = new SparkConf().setMaster("local[1]").setAppName("NetworkAnomalyDetector")
   val SC = new SparkContext(CONF)
   val SSC = new StreamingContext(SC, Milliseconds(100))
